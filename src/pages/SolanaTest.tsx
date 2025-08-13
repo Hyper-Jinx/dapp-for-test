@@ -10,9 +10,9 @@ import '@solana/wallet-adapter-react-ui/styles.css'
 
 const SOL_TRANSFER_LAMPORTS = 100000 // 0.0001 SOL
 const LONG_MESSAGE_BYTES = 30 * 1024 // 30KB
-const LONG_TX_TARGET_SERIALIZED_BYTES = 820
+const LONG_TX_TARGET_SERIALIZED_BYTES = 1000
 const LONG_TX_MAX_MEMOS = 40
-const LONG_TX_MEMO_SIZE = 64 // 64 bytes per memo payload
+const LONG_TX_MEMO_SIZE = 96 // 96 bytes per memo payload
 const MEMO_PROGRAM_ID = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'
 
 function SolanaActions() {
