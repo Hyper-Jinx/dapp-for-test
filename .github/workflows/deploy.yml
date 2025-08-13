@@ -27,19 +27,13 @@ jobs:
           node-version: 22
           cache: 'yarn'
 
-      - name: Enable Corepack
-        run: corepack enable
-
-      - name: Activate Yarn 4.9.2
-        run: corepack prepare yarn@4.9.2 --activate && corepack yarn --version
-
       - name: Install dependencies
-        run: corepack yarn install --immutable
+        run: yarn install --frozen-lockfile
 
       - name: Build
         env:
           BASE_PATH: /${{ github.event.repository.name }}/
-        run: corepack yarn build
+        run: yarn build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
