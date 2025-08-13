@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { clusterApiUrl, PublicKey, SystemProgram, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js'
+import { clusterApiUrl, PublicKey, SendTransactionError, SystemProgram, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js'
 import { ConnectionProvider, useAnchorWallet, useConnection, useWallet, WalletProvider } from '@solana/wallet-adapter-react'
 import { WalletModalProvider, WalletMultiButton } from '@solana/wallet-adapter-react-ui'
 import { BackpackWalletAdapter } from '@solana/wallet-adapter-backpack'
@@ -9,7 +9,6 @@ import { SolflareWalletAdapter } from '@solana/wallet-adapter-solflare'
 import '@solana/wallet-adapter-react-ui/styles.css'
 
 const SOL_TRANSFER_LAMPORTS = 100000 // 0.0001 SOL
-const LONG_MESSAGE_BYTES = 30 * 1024 // 30KB
 const LONG_TX_TARGET_SERIALIZED_BYTES = 1000
 const LONG_TX_MAX_MEMOS = 40
 const LONG_TX_MEMO_SIZE = 96 // 96 bytes per memo payload
@@ -32,17 +31,6 @@ function SolanaActions() {
 		}
 	}, [wallet])
 
-	const signLongMessage = useCallback(async () => {
-		try {
-			if (!wallet.signMessage) throw new Error('当前钱包不支持消息签名')
-			const longMessage = new Uint8Array(LONG_MESSAGE_BYTES)
-			for (let i = 0; i < longMessage.length; i++) longMessage[i] = i % 256
-			const signature = await wallet.signMessage(longMessage)
-			setStatus(`超长消息(${LONG_MESSAGE_BYTES}B)签名成功: ${Buffer.from(signature).toString('hex').slice(0, 32)}...`)
-		} catch (err: any) {
-			setStatus(`超长消息签名失败: ${err?.message || String(err)}`)
-		}
-	}, [wallet])
 
 	const signAndSendTransfer = useCallback(async () => {
 		try {
@@ -133,14 +121,35 @@ function SolanaActions() {
 
 			if (!wallet.signTransaction) throw new Error('当前钱包不支持交易签名')
 			await wallet.signTransaction(tx)
+
+			// Preflight: simulate with signature verification to capture detailed logs
+			const simulation = await connection.simulateTransaction(tx, { sigVerify: true })
+			if (simulation.value.err) {
+				const logs = simulation.value.logs || []
+				const serialized = tx.serialize()
+				setStatus(
+					`模拟失败: ${JSON.stringify(simulation.value.err)}\n` +
+					`logs:\n${logs.join('\n')}\n` +
+					`序列化大小: ${serialized.length}B (目标 ${LONG_TX_TARGET_SERIALIZED_BYTES}B)`
+				)
+				return
+			}
+
 			const serialized = tx.serialize()
 			if (serialized.length < LONG_TX_TARGET_SERIALIZED_BYTES) {
 				setStatus(`警告: 序列化后大小 ${serialized.length}B 未达到目标 ${LONG_TX_TARGET_SERIALIZED_BYTES}B，但仍将发送`)
 			}
-			const sig = await connection.sendRawTransaction(serialized)
+			const sig = await connection.sendRawTransaction(serialized, { skipPreflight: false })
 			await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
 			setStatus(`长交易已确认: ${sig} （序列化 ${serialized.length}B）`)
 		} catch (err: any) {
+			if (err instanceof SendTransactionError || typeof err?.getLogs === 'function') {
+				try {
+					const logs = await err.getLogs?.(connection)
+					setStatus(`长交易发送失败: ${err.message}\nlogs:\n${(logs || []).join('\n')}`)
+					return
+				} catch {}
+			}
 			setStatus(`长交易发送失败: ${err?.message || String(err)}`)
 		}
 	}, [wallet, connection])
@@ -153,9 +162,6 @@ function SolanaActions() {
 			<div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
 				<button onClick={signMessage} disabled={!wallet.connected}>
 					签名消息
-				</button>
-				<button onClick={signLongMessage} disabled={!wallet.connected}>
-					签名超长消息（30KB）
 				</button>
 				<button onClick={signAndSendTransfer} disabled={!wallet.connected}>
 					签名并发送 0.0001 SOL 自转账
