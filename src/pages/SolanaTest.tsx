@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { clusterApiUrl, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction } from '@solana/web3.js'
+import { clusterApiUrl, PublicKey, SystemProgram, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js'
 import { ConnectionProvider, useAnchorWallet, useConnection, useWallet, WalletProvider } from '@solana/wallet-adapter-react'
 import { WalletModalProvider, WalletMultiButton } from '@solana/wallet-adapter-react-ui'
 import { BackpackWalletAdapter } from '@solana/wallet-adapter-backpack'
@@ -9,6 +9,11 @@ import { SolflareWalletAdapter } from '@solana/wallet-adapter-solflare'
 import '@solana/wallet-adapter-react-ui/styles.css'
 
 const SOL_TRANSFER_LAMPORTS = 100000 // 0.0001 SOL
+const LONG_MESSAGE_BYTES = 30 * 1024 // 30KB
+const LONG_TX_TARGET_SERIALIZED_BYTES = 820
+const LONG_TX_MAX_MEMOS = 40
+const LONG_TX_MEMO_SIZE = 64 // 64 bytes per memo payload
+const MEMO_PROGRAM_ID = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'
 
 function SolanaActions() {
 	const { connection } = useConnection()
@@ -24,6 +29,18 @@ function SolanaActions() {
 			setStatus(`消息签名成功: ${Buffer.from(signature).toString('hex').slice(0, 32)}...`)
 		} catch (err: any) {
 			setStatus(`消息签名失败: ${err?.message || String(err)}`)
+		}
+	}, [wallet])
+
+	const signLongMessage = useCallback(async () => {
+		try {
+			if (!wallet.signMessage) throw new Error('当前钱包不支持消息签名')
+			const longMessage = new Uint8Array(LONG_MESSAGE_BYTES)
+			for (let i = 0; i < longMessage.length; i++) longMessage[i] = i % 256
+			const signature = await wallet.signMessage(longMessage)
+			setStatus(`超长消息(${LONG_MESSAGE_BYTES}B)签名成功: ${Buffer.from(signature).toString('hex').slice(0, 32)}...`)
+		} catch (err: any) {
+			setStatus(`超长消息签名失败: ${err?.message || String(err)}`)
 		}
 	}, [wallet])
 
@@ -59,6 +76,75 @@ function SolanaActions() {
 		}
 	}, [wallet, connection])
 
+	const signAndSendLongTransaction = useCallback(async () => {
+		try {
+			if (!wallet.publicKey) throw new Error('请先连接钱包')
+			const payerPublicKey = wallet.publicKey
+			const memoProgramId = new PublicKey(MEMO_PROGRAM_ID)
+
+			// Build instructions until estimated serialized bytes exceed threshold
+			const { blockhash: initialBlockhash } = await connection.getLatestBlockhash()
+			const buildMemo = (index: number) => {
+				const memoText = `memo-${index}: ` + 'X'.repeat(LONG_TX_MEMO_SIZE)
+				return new TransactionInstruction({
+					programId: memoProgramId,
+					keys: [{ pubkey: payerPublicKey, isSigner: true, isWritable: false }],
+					data: Buffer.from(memoText, 'utf8'),
+				})
+			}
+
+			const instructions: Array<TransactionInstruction> = []
+			// Always include the final transfer at the end; we'll append after memos
+			let estimatedSize = 0
+			for (let i = 0; i < LONG_TX_MAX_MEMOS; i++) {
+				instructions.push(buildMemo(i))
+				const draftMessage = new TransactionMessage({
+					payerKey: payerPublicKey,
+					recentBlockhash: initialBlockhash,
+					instructions: [
+						...instructions,
+						SystemProgram.transfer({
+							fromPubkey: payerPublicKey,
+							toPubkey: payerPublicKey,
+							lamports: SOL_TRANSFER_LAMPORTS,
+						}),
+					],
+				}).compileToV0Message()
+				const messageBytes = draftMessage.serialize().length
+				estimatedSize = 1 /* signatures length varint for 1 sig */ + 64 /* one signature */ + messageBytes
+				if (estimatedSize >= LONG_TX_TARGET_SERIALIZED_BYTES) break
+			}
+
+			// Rebuild with a fresh blockhash for sending
+			const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash()
+			const finalMessage = new TransactionMessage({
+				payerKey: payerPublicKey,
+				recentBlockhash: blockhash,
+				instructions: [
+					...instructions,
+					SystemProgram.transfer({
+						fromPubkey: payerPublicKey,
+						toPubkey: payerPublicKey,
+						lamports: SOL_TRANSFER_LAMPORTS,
+					}),
+				],
+			}).compileToV0Message()
+			const tx = new VersionedTransaction(finalMessage)
+
+			if (!wallet.signTransaction) throw new Error('当前钱包不支持交易签名')
+			await wallet.signTransaction(tx)
+			const serialized = tx.serialize()
+			if (serialized.length < LONG_TX_TARGET_SERIALIZED_BYTES) {
+				setStatus(`警告: 序列化后大小 ${serialized.length}B 未达到目标 ${LONG_TX_TARGET_SERIALIZED_BYTES}B，但仍将发送`)
+			}
+			const sig = await connection.sendRawTransaction(serialized)
+			await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
+			setStatus(`长交易已确认: ${sig} （序列化 ${serialized.length}B）`)
+		} catch (err: any) {
+			setStatus(`长交易发送失败: ${err?.message || String(err)}`)
+		}
+	}, [wallet, connection])
+
 	return (
 		<div style={{ padding: 24 }}>
 			<div style={{ marginBottom: 12 }}>
@@ -68,8 +154,14 @@ function SolanaActions() {
 				<button onClick={signMessage} disabled={!wallet.connected}>
 					签名消息
 				</button>
+				<button onClick={signLongMessage} disabled={!wallet.connected}>
+					签名超长消息（30KB）
+				</button>
 				<button onClick={signAndSendTransfer} disabled={!wallet.connected}>
 					签名并发送 0.0001 SOL 自转账
+				</button>
+				<button onClick={signAndSendLongTransaction} disabled={!wallet.connected}>
+					签署较长交易（含多条 Memo）并发送 0.0001 SOL
 				</button>
 			</div>
 			{anchorWallet?.publicKey && (
