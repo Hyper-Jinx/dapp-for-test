@@ -64,8 +64,12 @@ function SolanaActions() {
 				return
 			}
 
-			// Fallback to adapter sendTransaction
-			const sig = await (wallet as any).sendTransaction?.(tx, connection, { skipPreflight: false })
+			// Fallback to adapter sendTransaction with preflight options
+			const sig = await wallet.sendTransaction(tx, connection, {
+				skipPreflight: false,
+				preflightCommitment: 'confirmed',
+				maxRetries: 3,
+			})
 			await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
 			setStatus(`交易已确认: ${sig}`)
 		} catch (err: any) {
@@ -112,7 +116,7 @@ function SolanaActions() {
 				if (estimatedSize >= LONG_TX_TARGET_SERIALIZED_BYTES) break
 			}
 
-			// Rebuild with a fresh blockhash for sending
+            // Rebuild with a fresh blockhash for sending
 			const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash()
 			const finalMessage = new TransactionMessage({
 				payerKey: payerPublicKey,
@@ -126,9 +130,24 @@ function SolanaActions() {
 					}),
 				],
 			}).compileToV0Message()
-			const tx = new VersionedTransaction(finalMessage)
+            const tx = new VersionedTransaction(finalMessage)
 
-			// Prefer provider signAndSendTransaction when available
+            // Quick pre-simulate without signature verification to catch instruction errors
+            try {
+                const presim = await connection.simulateTransaction(tx, { sigVerify: false })
+                if (presim.value.err) {
+                    const logs = presim.value.logs || []
+                    const serialized = tx.serialize()
+                    setStatus(
+                        `模拟失败(未验签): ${JSON.stringify(presim.value.err)}\n` +
+                        `logs:\n${logs.join('\n')}\n` +
+                        `序列化大小: ${serialized.length}B (目标 ${LONG_TX_TARGET_SERIALIZED_BYTES}B)`
+                    )
+                    return
+                }
+            } catch {}
+
+            // Prefer provider signAndSendTransaction when available
 			const provider: any = (globalThis as any).solana
 			if (provider?.signAndSendTransaction) {
 				const res = await provider.signAndSendTransaction(tx, { preflightCommitment: 'confirmed' })
@@ -139,25 +158,16 @@ function SolanaActions() {
 				return
 			}
 
-			// Fallback: adapter path retains simulate+logs for debugging
-			if (!wallet.signTransaction) throw new Error('当前钱包不支持交易签名')
-			await wallet.signTransaction(tx)
-			const simulation = await connection.simulateTransaction(tx, { sigVerify: true })
-			if (simulation.value.err) {
-				const logs = simulation.value.logs || []
-				const serialized = tx.serialize()
-				setStatus(
-					`模拟失败: ${JSON.stringify(simulation.value.err)}\n` +
-					`logs:\n${logs.join('\n')}\n` +
-					`序列化大小: ${serialized.length}B (目标 ${LONG_TX_TARGET_SERIALIZED_BYTES}B)`
-				)
-				return
-			}
-			const serialized = tx.serialize()
-			if (serialized.length < LONG_TX_TARGET_SERIALIZED_BYTES) {
-				setStatus(`警告: 序列化后大小 ${serialized.length}B 未达到目标 ${LONG_TX_TARGET_SERIALIZED_BYTES}B，但仍将发送`)
-			}
-			const sig = await wallet.sendTransaction(tx, connection, { skipPreflight: false })
+            // Fallback: let adapter sign and send without prior manual signing
+            const serialized = tx.serialize()
+            if (serialized.length < LONG_TX_TARGET_SERIALIZED_BYTES) {
+                setStatus(`警告: 序列化后大小 ${serialized.length}B 未达到目标 ${LONG_TX_TARGET_SERIALIZED_BYTES}B，但仍将发送`)
+            }
+            const sig = await wallet.sendTransaction(tx, connection, {
+                skipPreflight: false,
+                preflightCommitment: 'confirmed',
+                maxRetries: 3,
+            })
 			await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
 			setStatus(`长交易已确认: ${sig} （序列化 ${serialized.length}B）`)
 		} catch (err: any) {
