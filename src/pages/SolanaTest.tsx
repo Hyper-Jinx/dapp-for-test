@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { clusterApiUrl, PublicKey, SendTransactionError, SystemProgram, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js'
 import { ConnectionProvider, useAnchorWallet, useConnection, useWallet, WalletProvider } from '@solana/wallet-adapter-react'
 import { WalletModalProvider, WalletMultiButton } from '@solana/wallet-adapter-react-ui'
@@ -183,8 +183,23 @@ function SolanaActions() {
 }
 
 export default function SolanaTest() {
-	// Switch to mainnet-beta per request
-	const endpoint = useMemo(() => clusterApiUrl('mainnet-beta'), [])
+	// Allow runtime-configurable RPC endpoint with fallbacks
+	const defaultEndpoint = (import.meta as any).env?.VITE_SOLANA_RPC || clusterApiUrl('mainnet-beta')
+	const [endpoint, setEndpoint] = useState<string>(() => {
+		try {
+			const params = new URLSearchParams(window.location.search)
+			const fromParam = params.get('rpc')
+			const stored = localStorage.getItem('solanaRpcEndpoint')
+			return (fromParam || stored || defaultEndpoint) as string
+		} catch {
+			return defaultEndpoint as string
+		}
+	})
+	const [rpcInput, setRpcInput] = useState<string>(endpoint)
+
+	useEffect(() => {
+		setRpcInput(endpoint)
+	}, [endpoint])
 	const wallets = useMemo(
 		() => [new PhantomWalletAdapter(), new SolflareWalletAdapter(), new BackpackWalletAdapter()],
 		[],
@@ -194,6 +209,28 @@ export default function SolanaTest() {
 		<ConnectionProvider endpoint={endpoint} config={{ commitment: 'confirmed' }}>
 			<WalletProvider wallets={wallets} autoConnect>
 				<WalletModalProvider>
+					<div style={{ padding: 24, border: '1px solid #eee', borderRadius: 8, margin: '0 24px 12px' }}>
+						<label style={{ display: 'block', fontWeight: 600, marginBottom: 6 }}>RPC Endpoint</label>
+						<div style={{ display: 'flex', gap: 8 }}>
+							<input
+								value={rpcInput}
+								onChange={(e) => setRpcInput(e.target.value)}
+								placeholder="https://your.rpc.endpoint"
+								style={{ flex: 1, padding: 8 }}
+							/>
+							<button
+								onClick={() => {
+									setEndpoint(rpcInput.trim())
+									try {
+										localStorage.setItem('solanaRpcEndpoint', rpcInput.trim())
+									} catch {}
+								}}
+							>
+								应用
+							</button>
+						</div>
+						<p style={{ marginTop: 6, color: '#666' }}>支持 URL 参数 ?rpc=... 覆盖。默认 {defaultEndpoint}</p>
+					</div>
 					<SolanaActions />
 				</WalletModalProvider>
 			</WalletProvider>
