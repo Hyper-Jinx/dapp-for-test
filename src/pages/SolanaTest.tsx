@@ -66,7 +66,7 @@ function SolanaActions() {
 
 			// Fallback to adapter sendTransaction with preflight options
 			const sig = await wallet.sendTransaction(tx, connection, {
-				skipPreflight: false,
+				skipPreflight: true,
 				preflightCommitment: 'confirmed',
 				maxRetries: 3,
 			})
@@ -164,7 +164,7 @@ function SolanaActions() {
                 setStatus(`警告: 序列化后大小 ${serialized.length}B 未达到目标 ${LONG_TX_TARGET_SERIALIZED_BYTES}B，但仍将发送`)
             }
             const sig = await wallet.sendTransaction(tx, connection, {
-                skipPreflight: false,
+                skipPreflight: true,
                 preflightCommitment: 'confirmed',
                 maxRetries: 3,
             })
