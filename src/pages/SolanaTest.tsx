@@ -72,14 +72,14 @@ function SolanaActions() {
 
 			// Build instructions until estimated serialized bytes exceed threshold
 			const { blockhash: initialBlockhash } = await connection.getLatestBlockhash()
-			const buildMemo = (index: number) => {
-				const memoText = `memo-${index}: ` + 'X'.repeat(LONG_TX_MEMO_SIZE)
-				return new TransactionInstruction({
-					programId: memoProgramId,
-					keys: [{ pubkey: payerPublicKey, isSigner: true, isWritable: false }],
-					data: Buffer.from(memoText, 'utf8'),
-				})
-			}
+            const buildMemo = (index: number) => {
+                const memoText = `memo-${index}: ` + 'X'.repeat(LONG_TX_MEMO_SIZE)
+                return new TransactionInstruction({
+                    programId: memoProgramId,
+                    keys: [],
+                    data: Buffer.from(memoText, 'utf8'),
+                })
+            }
 
 			const instructions: Array<TransactionInstruction> = []
 			// Always include the final transfer at the end; we'll append after memos
@@ -139,8 +139,8 @@ function SolanaActions() {
 			if (serialized.length < LONG_TX_TARGET_SERIALIZED_BYTES) {
 				setStatus(`警告: 序列化后大小 ${serialized.length}B 未达到目标 ${LONG_TX_TARGET_SERIALIZED_BYTES}B，但仍将发送`)
 			}
-			const sig = await connection.sendRawTransaction(serialized, { skipPreflight: false })
-			await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
+            const sig = await wallet.sendTransaction(tx, connection, { skipPreflight: false })
+            await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed')
 			setStatus(`长交易已确认: ${sig} （序列化 ${serialized.length}B）`)
 		} catch (err: any) {
 			if (err instanceof SendTransactionError || typeof err?.getLogs === 'function') {
