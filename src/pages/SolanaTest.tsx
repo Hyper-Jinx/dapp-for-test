@@ -183,8 +183,8 @@ function SolanaActions() {
 }
 
 export default function SolanaTest() {
-	// Use mainnet or devnet; here we use devnet to avoid real SOL spending
-	const endpoint = useMemo(() => clusterApiUrl('devnet'), [])
+	// Switch to mainnet-beta per request
+	const endpoint = useMemo(() => clusterApiUrl('mainnet-beta'), [])
 	const wallets = useMemo(
 		() => [new PhantomWalletAdapter(), new SolflareWalletAdapter(), new BackpackWalletAdapter()],
 		[],
